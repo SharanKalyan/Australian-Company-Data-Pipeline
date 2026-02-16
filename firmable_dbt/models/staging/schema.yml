@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: commoncrawl_clean
+    description: Cleaned Common Crawl company dataset with normalized company names.
+    columns:
+      - name: website_url
+        description: Official website URL of the extracted company.
+        tests:
+          - not_null
+
+      - name: company_name
+        description: Cleaned company name extracted from website metadata.
+
+      - name: normalized_name
+        description: Lowercase normalized company name used for entity matching.
+
+  - name: abr_clean
+    description: Cleaned Australian Business Register dataset.
+    columns:
+      - name: abn
+        description: Australian Business Number (unique identifier).
+        tests:
+          - not_null
+          - unique
+
+      - name: normalized_name
+        description: Normalized legal entity name for matching.
+        tests:
+          - not_null

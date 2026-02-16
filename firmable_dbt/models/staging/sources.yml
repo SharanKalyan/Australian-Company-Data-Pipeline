@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: staging
+    database: firmable_db
+    schema: staging
+    tables:
+      - name: abr_raw
+      - name: commoncrawl_raw
