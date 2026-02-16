@@ -49,10 +49,11 @@ RapidFuzz token_sort_ratio scoring.
 
 Step 3: Threshold Logic
 
-Score Range : Action
->= 85	      : Auto-accept
-75–84	      : AI validation
-< 75	      : Reject
+| Score Range   | Action        |
+|---------------|---------------|
+| >= 85	        | Auto-accept   |
+| 75–84	        | AI validation |
+| < 75	        | Reject        |
 
 
 
