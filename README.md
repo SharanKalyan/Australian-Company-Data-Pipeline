@@ -158,14 +158,32 @@ Lineage graph and column documentation generated via: (Screenshots attached insi
 - dbt docs serve
 
 
-## FastAPI
+## API Layer (FastAPI Serving Layer)
 
-Minimal API Endpoint:
+The project exposes a lightweight REST API built using FastAPI to serve unified and validated company records from the core.company_master table.
+This layer demonstrates how the data pipeline transitions from batch processing into a queryable serving layer.
+The API only exposes matched and validated entities, ensuring consumers interact with clean, integrated data.
 
-@app.get("/companies")
-def get_companies(limit: int = 10):
+Running the API: 
+- python -m uvicorn src.api.api:app --reload
+- Open http://127.0.0.1:8000/docs
 
-Returns unified company records from core.company_master
+Available Endpoints:
+1. GET/
+- Health check endpoint.
+- Returns service status to confirm the API is running.
+- {"status": "running", "service": "Firmable Company API"}
+
+2. GET/companies?limit=10
+- Returns a list of unified (matched) company records from core.company_master.
+- Query Parameters: limit (optional) Number of records to return. Default is 10.
+- example: /companies?limit=5
+  
+3. GET/company/{abn}
+- Returns a single unified company record by ABN.
+- /company/12644536729
+- If the ABN does not exist in the unified layer, a 404 response is returned.
+
 
 ## Setup & Running Instructions
 
