@@ -205,3 +205,23 @@ Returns unified company records from core.company_master
 - pgAdmin 4
 - dbt CLI
 - Ollama (local LLM runtime)
+
+## Repository Structure
+-- data/
+-- src/
+-- firmable_dbt/
+-- sql/
+-- architecture/
+-- README.md
+
+# Final Notes
+
+This project demonstrates:
+- Data engineering fundamentals
+- Entity resolution strategy
+- AI-assisted validation
+- Warehouse modeling with dbt
+- Governance & security
+- Scalable architecture thinking
+
+It is designed to simulate a production-grade integration pipeline under realistic constraints.
