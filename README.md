@@ -58,8 +58,11 @@ Step 3: Threshold Logic
 
 
 Step 4: AI Semantic Validation
+
 Local LLM via Ollama (phi3:mini)
+
 Structured JSON response:
+
 {
   "same_entity": true,
   "confidence": 0.92,
@@ -145,12 +148,60 @@ This enforces governance and production-style access control.
 ## Data Quality
 
 Implemented:
-not_null on ABN
-unique on ABN
-not_null on normalized names
-not_null on website_url
+- not_null on ABN
+- unique on ABN
+- not_null on normalized names
+- not_null on website_url
 
 Lineage graph and column documentation generated via: (Screenshots attached inside "architecture" folder)
-dbt docs generate
-dbt docs serve
+- dbt docs generate
+- dbt docs serve
 
+
+## FastAPI
+
+Minimal API Endpoint:
+
+@app.get("/companies")
+def get_companies(limit: int = 10):
+
+Returns unified company records from core.company_master
+
+## Setup & Running Instructions
+
+1. Create Environment
+  - conda create -n firmable-pipeline-311 python=3.11
+  - conda activate firmable-pipeline-311 
+  - pip install -r requirements.txt
+
+2. setup PostgreSQL
+   - Create database "firmable_db"
+   - Run "schema.sql"
+
+3. Run Ingestion 
+  - python -m src.ingestion.commoncrawl_extractor
+  - python -m src.ingestion.abr_parser
+
+4. Run dbt
+  - cd firmable_dbt
+  - dbt run
+  - dbt test
+
+5. Run Matching
+  - python -m src.matching.entity_matcher
+
+## Design Decisions
+
+- Python for procedural parsing (XML/WARC)
+- dbt for warehouse-native transformations and testing
+- Hybrid matching instead of purely fuzzy
+- AI only for borderline cases to control cost
+- Prompt logging for auditability
+- Role-based database security
+
+## IDE Used
+
+- Visual Studio Code
+- pgAdmin 4
+- dbt CLI
+- Ollama (local LLM runtime)
