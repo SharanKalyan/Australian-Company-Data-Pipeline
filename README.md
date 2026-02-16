@@ -207,12 +207,12 @@ Returns unified company records from core.company_master
 - Ollama (local LLM runtime)
 
 ## Repository Structure
--- data/
--- src/
--- firmable_dbt/
--- sql/
--- architecture/
--- README.md
+- data/
+- src/
+- firmable_dbt/
+- sql/
+- architecture/
+- README.md
 
 # Final Notes
 
