@@ -21,9 +21,9 @@ This project demonstrates a scalable data pipeline that:
 
 The architecture separates ingestion, transformation, matching, and core integration layers to reflect production-ready design principles.
 
-## Architecture (screenshot attached in Architecture folder) 
+## Architecture (screenshot attached in Architecture folder for better clarity and visibility) 
 
-<img width="826" height="3686" alt="architecture" src="https://github.com/user-attachments/assets/1ab421b4-d659-41c6-955c-d28520df5a38" />
+<img width="826" height="3686" alt="architecture-darkmode" src="https://github.com/user-attachments/assets/a24f4fc7-72d5-4e1f-b9af-ef3877eb3c80" />
 
 
 ## Dataset Statistics
