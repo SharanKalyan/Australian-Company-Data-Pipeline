@@ -23,7 +23,8 @@ The architecture separates ingestion, transformation, matching, and core integra
 
 ## Architecture (screenshot attached in Architecture folder) 
 
-<img width="826" height="2986" alt="architecture" src="https://github.com/user-attachments/assets/720990af-2993-427c-b248-dd72268c21e8" />
+<img width="826" height="3686" alt="architecture" src="https://github.com/user-attachments/assets/1ab421b4-d659-41c6-955c-d28520df5a38" />
+
 
 ## Dataset Statistics
 
