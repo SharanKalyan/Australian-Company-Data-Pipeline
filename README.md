@@ -28,11 +28,12 @@ The architecture separates ingestion, transformation, matching, and core integra
 
 ## Dataset Statistics
 
+| Table Name                 | Counts   |
+|----------------------------|----------|
 | ABR Raw Records Loaded	   | 500,000  |
-|--------------------------- | -------- |
 | ABR Clean Records          | 118,882  |
 | Common Crawl Raw Records	 | 799      |
-| Common Crawl Clean Records | 584      |
+| Common Crawl Clean Records | 799      |
 | Total Matches Identified   | 50       |
 | Fuzzy Auto Matches	       | 42       |
 | AI Validated Matches	     | 8        |
