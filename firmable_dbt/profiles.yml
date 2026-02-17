@@ -1,0 +1,12 @@
+firmable_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      user: postgres
+      password: firmable
+      port: 5432
+      dbname: firmable_db
+      schema: staging
+      threads: 4
