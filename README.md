@@ -46,7 +46,8 @@ The architecture separates ingestion, transformation, matching, and core integra
   - `python -m src.matching.entity_matcher`
 
 
-## Architecture (.PNG/.SVG files of the architecture diagram (from Excalidraw) attached in `architecture/` folder for better clarity and visibility) 
+## System Architecture 
+(.PNG/.SVG files of the architecture diagram (from Excalidraw) attached in `architecture/` folder for better clarity and visibility) 
 
 <img width="826" height="3686" alt="architecture-darkmode" src="https://github.com/user-attachments/assets/a24f4fc7-72d5-4e1f-b9af-ef3877eb3c80" />
 
