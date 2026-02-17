@@ -28,8 +28,8 @@ The architecture separates ingestion, transformation, matching, and core integra
   - `conda activate firmable-pipeline-311` 
   - `pip install -r requirements.txt`
 
-2. setup PostgreSQL (Version 15)
-   - Download version 15 from `https://www.enterprisedb.com/downloads/postgres-postgresql-downloads`
+2. Setup PostgreSQL (Version 15)
+   - Download version 15 from https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
    - Create database "firmable_db"
    - Run `schema.sql`
 
