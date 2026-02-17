@@ -90,11 +90,11 @@ Local LLM via Ollama (phi3:mini)
 
 Structured JSON response:
 
-{
+`{
   "same_entity": true,
   "confidence": 0.92,
   "reason": "Minor formatting difference only"
-}
+}`
 
 ## Data Cleaning & Normalisation
 
