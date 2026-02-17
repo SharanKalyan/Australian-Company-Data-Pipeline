@@ -31,5 +31,15 @@ clean-targets:         # directories to be removed by `dbt clean`
 # files using the `{{ config(...) }}` macro.
 models:
   firmable_dbt:
-    # Config indicated by + and applies to all files under models/example/
+
+      staging:
+      +schema: staging
+      +materialized: view
+
+    # Optional future layer
+    marts:
+      +schema: core
+      +materialized: table
+  
+
 
