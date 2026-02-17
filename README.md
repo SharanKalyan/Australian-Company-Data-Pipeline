@@ -28,7 +28,7 @@ The architecture separates ingestion, transformation, matching, and core integra
   - `conda activate firmable-pipeline-311` 
   - `pip install -r requirements.txt`
 
-2. setup PostgreSQL
+2. setup PostgreSQL (Version 15)
    - Create database "firmable_db"
    - Run `schema.sql`
 
