@@ -29,7 +29,7 @@ The architecture separates ingestion, transformation, matching, and core integra
   - `pip install -r requirements.txt`
 
 2. setup PostgreSQL (Version 15)
-   - Download version 15 from 'https://www.enterprisedb.com/downloads/postgres-postgresql-downloads'
+   - Download version 15 from `https://www.enterprisedb.com/downloads/postgres-postgresql-downloads`
    - Create database "firmable_db"
    - Run `schema.sql`
 
