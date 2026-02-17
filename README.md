@@ -34,10 +34,10 @@ The architecture separates ingestion, transformation, matching, and core integra
    - Run `schema.sql`
 
 4. Run Ingestion 
-  - `python -m src.ingestion.commoncrawl_extractor`
+  - `python -m src.ingestion.commoncrawl_extractor` (Currently extracts 1000 raw entities to keep the resource usage minimal for the pupose of this interview. The architecture supports scalling up to a higher number) 
   - Download the XML file from ABR - https://data.gov.au/data/dataset/abn-bulk-extract/resource/0ae4d427-6fa8-4d40-8e76-c6909b5a071b and place the xml files inside `./data/raw/abr`
   - Each file is ~550 MB in size, So I have uploaded only a sample xml with 5 entities in this repo. 
-  - `python -m src.ingestion.abr_parser`
+  - `python -m src.ingestion.abr_parser` (parses through 500K entities from the xml file stored inside the data/raw/abr, This again can be scalled up to a larger number)  
 
 4. Run dbt
   - `cd firmable_dbt`
