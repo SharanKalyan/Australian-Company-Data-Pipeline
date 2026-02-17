@@ -35,6 +35,7 @@ The architecture separates ingestion, transformation, matching, and core integra
 
 4. Run Ingestion 
   - `python -m src.ingestion.commoncrawl_extractor`
+  - Download the XML file from ABR Extract and place it inside `./data/raw/abr` 
   - `python -m src.ingestion.abr_parser`
 
 4. Run dbt
