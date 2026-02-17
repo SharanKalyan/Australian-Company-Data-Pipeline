@@ -35,7 +35,8 @@ The architecture separates ingestion, transformation, matching, and core integra
 
 4. Run Ingestion 
   - `python -m src.ingestion.commoncrawl_extractor`
-  - Download the XML file from ABR - https://data.gov.au/data/dataset/abn-bulk-extract/resource/0ae4d427-6fa8-4d40-8e76-c6909b5a071b Extract, rename it as "Part-1.xml" and place it inside `./data/raw/abr`
+  - Download the XML file from ABR - https://data.gov.au/data/dataset/abn-bulk-extract/resource/0ae4d427-6fa8-4d40-8e76-c6909b5a071b and place the xml files inside `./data/raw/abr`
+  - Make sure to rename each file as "Part-1.xml", "Part-2.xml" and so on. 
   - Each file is ~550 MB in size, So I have uploaded a sample xml with 5 entities in this repo. 
   - `python -m src.ingestion.abr_parser`
 
