@@ -29,10 +29,11 @@ The architecture separates ingestion, transformation, matching, and core integra
   - `pip install -r requirements.txt`
 
 2. setup PostgreSQL (Version 15)
+   - Download version 15 from 'https://www.enterprisedb.com/downloads/postgres-postgresql-downloads'
    - Create database "firmable_db"
    - Run `schema.sql`
 
-3. Run Ingestion 
+4. Run Ingestion 
   - `python -m src.ingestion.commoncrawl_extractor`
   - `python -m src.ingestion.abr_parser`
 
