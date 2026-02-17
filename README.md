@@ -21,6 +21,30 @@ This project demonstrates a scalable data pipeline that:
 
 The architecture separates ingestion, transformation, matching, and core integration layers to reflect production-ready design principles.
 
+## Setup & Running Instructions
+
+1. Create Environment
+  - conda create -n firmable-pipeline-311 python=3.11
+  - conda activate firmable-pipeline-311 
+  - pip install -r requirements.txt
+
+2. setup PostgreSQL
+   - Create database "firmable_db"
+   - Run "schema.sql"
+
+3. Run Ingestion 
+  - python -m src.ingestion.commoncrawl_extractor
+  - python -m src.ingestion.abr_parser
+
+4. Run dbt
+  - cd firmable_dbt
+  - dbt run
+  - dbt test
+
+5. Run Matching
+  - python -m src.matching.entity_matcher
+
+
 ## Architecture (screenshot attached in Architecture folder for better clarity and visibility) 
 
 <img width="826" height="3686" alt="architecture-darkmode" src="https://github.com/user-attachments/assets/a24f4fc7-72d5-4e1f-b9af-ef3877eb3c80" />
@@ -187,29 +211,6 @@ Available Endpoints:
 - /company/12644536729
 - If the ABN does not exist in the unified layer, a 404 response is returned.
 
-
-## Setup & Running Instructions
-
-1. Create Environment
-  - conda create -n firmable-pipeline-311 python=3.11
-  - conda activate firmable-pipeline-311 
-  - pip install -r requirements.txt
-
-2. setup PostgreSQL
-   - Create database "firmable_db"
-   - Run "schema.sql"
-
-3. Run Ingestion 
-  - python -m src.ingestion.commoncrawl_extractor
-  - python -m src.ingestion.abr_parser
-
-4. Run dbt
-  - cd firmable_dbt
-  - dbt run
-  - dbt test
-
-5. Run Matching
-  - python -m src.matching.entity_matcher
 
 ## Design Decisions
 
