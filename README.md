@@ -41,6 +41,7 @@ The architecture separates ingestion, transformation, matching, and core integra
 
 4. Run dbt
   - `cd firmable_dbt`
+  - `set DBT_DISABLE_TELEMETRY=1`
   - `dbt run --profiles-dir` 
   - `dbt test --profiles-dir`
 
