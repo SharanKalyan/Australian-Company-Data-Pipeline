@@ -35,7 +35,6 @@ msgpack==1.1.2
 networkx==3.6.1
 numpy==2.4.2
 orderly-set==5.5.0
-packaging @ file:///C:/miniconda3/conda-bld/packaging_1761049096285/work
 pandas==3.0.0
 parsedatetime==2.6
 pathspec==0.12.1
@@ -67,3 +66,4 @@ urllib3==2.6.3
 uvicorn==0.40.0
 warcio==1.7.5
 zipp==3.23.0
+
