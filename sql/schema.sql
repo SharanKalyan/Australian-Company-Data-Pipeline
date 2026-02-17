@@ -6,13 +6,16 @@
 
 -- =====================
 -- CREATING SCHEMA
+-- =====================
 CREATE SCHEMA IF NOT EXISTS staging;
 CREATE SCHEMA IF NOT EXISTS core;
--- =====================
+
 
 -- =====================
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- UUID
 -- =====================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 
 -- ======================
 -- STAGING TABLES (RAW)
@@ -136,6 +139,7 @@ GRANT SELECT ON TABLES TO analyst_readonly;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA core
 GRANT SELECT ON TABLES TO analyst_readonly;
+
 
 
 
