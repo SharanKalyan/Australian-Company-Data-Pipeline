@@ -24,25 +24,25 @@ The architecture separates ingestion, transformation, matching, and core integra
 ## Setup & Running Instructions
 
 1. Create Environment
-  - conda create -n firmable-pipeline-311 python=3.11
-  - conda activate firmable-pipeline-311 
-  - pip install -r requirements.txt
+  - `conda create -n firmable-pipeline-311 python=3.11`
+  - `conda activate firmable-pipeline-311` 
+  - `pip install -r requirements.txt`
 
 2. setup PostgreSQL
    - Create database "firmable_db"
-   - Run "schema.sql"
+   - Run `schema.sql`
 
 3. Run Ingestion 
-  - python -m src.ingestion.commoncrawl_extractor
-  - python -m src.ingestion.abr_parser
+  - `python -m src.ingestion.commoncrawl_extractor`
+  - `python -m src.ingestion.abr_parser`
 
 4. Run dbt
-  - cd firmable_dbt
-  - dbt run
-  - dbt test
+  - `cd firmable_dbt`
+  - `dbt run`
+  - `dbt test`
 
 5. Run Matching
-  - python -m src.matching.entity_matcher
+  - `python -m src.matching.entity_matcher`
 
 
 ## Architecture (screenshot attached in Architecture folder for better clarity and visibility) 
@@ -62,7 +62,7 @@ The architecture separates ingestion, transformation, matching, and core integra
 | Fuzzy Auto Matches	       | 42       |
 | AI Validated Matches	     | 8        |
 
-## Note: The architecture supports scaling to 100k+ Common Crawl records with parallel execution or cloud deployment.
+### Note: The architecture supports scaling to 100k+ Common Crawl records with parallel execution or cloud deployment.
 
 ## Hybrid Entity Matching Strategy
 
@@ -142,17 +142,17 @@ Structured JSON response:
 
 ## Indexing Strategy
 
-CREATE INDEX idx_abr_clean_normalized_name
-ON staging.abr_clean(normalized_name);
+`CREATE INDEX idx_abr_clean_normalized_name
+ON staging.abr_clean(normalized_name);`
 
-CREATE INDEX idx_commoncrawl_clean_normalized_name
-ON staging.commoncrawl_clean(normalized_name);
+`CREATE INDEX idx_commoncrawl_clean_normalized_name
+ON staging.commoncrawl_clean(normalized_name);`
 
-CREATE INDEX idx_company_master_abn
-ON core.company_master(abn);
+`CREATE INDEX idx_company_master_abn
+ON core.company_master(abn);`
 
-CREATE INDEX idx_company_master_name
-ON core.company_master(company_name);
+`CREATE INDEX idx_company_master_name
+ON core.company_master(company_name);`
 
 Indexes support:
 - Faster matching lookups
@@ -181,8 +181,8 @@ Implemented:
 - not_null on website_url
 
 Lineage graph and column documentation generated via: (Screenshots attached inside "architecture" folder)
-- dbt docs generate
-- dbt docs serve
+- `dbt docs generate`
+- `dbt docs serve`
 
 
 ## API Layer (FastAPI Serving Layer)
@@ -192,21 +192,21 @@ This layer demonstrates how the data pipeline transitions from batch processing 
 The API only exposes matched and validated entities, ensuring consumers interact with clean, integrated data.
 
 Running the API: 
-- python -m uvicorn src.api.api:app --reload
-- Open http://127.0.0.1:8000/docs
+- `python -m uvicorn src.api.api:app --reload`
+- Open `http://127.0.0.1:8000/docs`
 
 Available Endpoints:
-1. GET/
+1. `GET/`
 - Health check endpoint.
 - Returns service status to confirm the API is running.
-- {"status": "running", "service": "Firmable Company API"}
+- `{"status": "running", "service": "Firmable Company API"}`
 
-2. GET/companies?limit=10
+2. `GET/companies?limit=10`
 - Returns a list of unified (matched) company records from core.company_master.
 - Query Parameters: limit (optional) Number of records to return. Default is 10.
 - example: /companies?limit=5
   
-3. GET/company/{abn}
+3. `GET/company/{abn}`
 - Returns a single unified company record by ABN.
 - /company/12644536729
 - If the ABN does not exist in the unified layer, a 404 response is returned.
