@@ -86,10 +86,10 @@ select * from staging.commoncrawl_clean limit 50;
 
 
 
-TRUNCATE TABLE staging.commoncrawl_raw;
-TRUNCATE TABLE staging.commoncrawl_clean;
+-- TRUNCATE TABLE staging.commoncrawl_raw;
+-- TRUNCATE TABLE staging.commoncrawl_clean;
 
-TRUNCATE TABLE core.company_master;
+-- TRUNCATE TABLE core.company_master;
 
 SELECT COUNT(*) FROM staging.commoncrawl_raw;
 SELECT COUNT(*) FROM staging.commoncrawl_clean;
@@ -122,5 +122,64 @@ where match_method = 'ai_validated';
 
 SELECT uuid_generate_v4();
 
+select count(*) from staging.commoncrawl_clean;
 
 
+select * from staging.abr_raw limit 100;
+
+
+
+SELECT table_type
+FROM information_schema.tables
+WHERE table_schema = 'staging'
+AND table_name = 'commoncrawl_clean';
+
+DROP VIEW staging.commoncrawl_clean;
+
+SELECT company_name
+FROM staging.commoncrawl_raw
+WHERE company_name != trim(company_name)
+LIMIT 10;
+
+
+-- TRUNCATE staging.commoncrawl_raw;
+--TRUNCATE staging.commoncrawl_clean;
+
+
+-- truncate table core.company_master;
+
+-- truncate table core.ai_match_log;
+
+select count(*) from core.company_master;
+
+select count(*) from core.ai_match_log;
+
+select * from staging.commoncrawl_raw 
+order by loaded_at desc 
+limit 100;
+
+select count(*) from staging.commoncrawl_clean;
+
+select count(*) from staging.commoncrawl_raw
+where industry is null;
+
+select count(*) from staging.commoncrawl_raw;
+
+select count(*) from staging.abr_clean;
+
+select * from staging.commoncrawl_clean 
+limit 100 ; 
+
+select count(*) from core.company_master;
+
+select count(*) from core.ai_match_log;
+
+select * from core.company_master;
+
+select * from core.ai_match_log;
+
+SELECT * FROM core.company_master WHERE postcode IS NULL OR state IS NULL;
+
+
+-- truncate table core.company_master;
+-- truncate table core.ai_match_log;
