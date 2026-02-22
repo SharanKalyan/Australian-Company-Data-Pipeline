@@ -143,7 +143,7 @@ LIMIT 10;
 
 
 -- TRUNCATE staging.commoncrawl_raw;
---TRUNCATE staging.commoncrawl_clean;
+TRUNCATE staging.commoncrawl_clean;
 
 
 -- truncate table core.company_master;
@@ -174,7 +174,20 @@ select count(*) from core.company_master;
 
 select count(*) from core.ai_match_log;
 
-select * from core.company_master;
+select * from core.company_master
+order by created_at desc
+limit 1000
+;
+
+
+select company_name, string_agg(distinct website_url, ' | ') as "listagg" , count(website_url) as "counts" from core.company_master
+group by 1
+order by counts desc
+;
+
+select distinct count(abn) from core.company_master;
+
+select count(*) from core.company_master;
 
 select * from core.ai_match_log;
 
@@ -183,3 +196,5 @@ SELECT * FROM core.company_master WHERE postcode IS NULL OR state IS NULL;
 
 -- truncate table core.company_master;
 -- truncate table core.ai_match_log;
+
+-- truncate table staging.commoncrawl_clean;
