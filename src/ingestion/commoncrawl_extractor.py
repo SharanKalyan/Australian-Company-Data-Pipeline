@@ -1,299 +1,176 @@
 import requests
 import json
-import re
 from urllib.parse import urlparse
-from warcio.archiveiterator import ArchiveIterator
-from io import BytesIO
-from bs4 import BeautifulSoup
 import pandas as pd
-from tqdm import tqdm
-from datetime import datetime
-import os
-from requests.exceptions import ChunkedEncodingError, ConnectionError
 import time
+from requests.exceptions import ChunkedEncodingError, ConnectionError
 from src.db.connection import PostgresConnector
 
 
-class CommonCrawlExtractor:
-    def __init__(self, crawl_index="CC-MAIN-2025-13", limit=5000):
+class FastCommonCrawlExtractor:
+
+    def __init__(
+        self,
+        crawl_index="CC-MAIN-2025-13",
+        start_page=0,
+        max_pages=100,
+        batch_size=5000
+    ):
         self.crawl_index = crawl_index
-        self.limit = limit
+        self.start_page = start_page
+        self.max_pages = max_pages
+        self.batch_size = batch_size
         self.base_url = f"https://index.commoncrawl.org/{self.crawl_index}-index"
 
-    # ---------------------------
-    # URL Filtering
-    # ---------------------------
-    def is_valid_company_url(self, url):
-        if not url:
+    def is_valid_domain(self, domain):
+        if not domain:
             return False
+        return domain.lower().endswith(".au")
 
-        parsed = urlparse(url)
-        domain = parsed.hostname.lower() if parsed.hostname else ""
+    def domain_to_company_name(self, domain):
+        name = domain.lower()
+        name = name.replace("www.", "")
+        name = name.replace(".com.au", "")
+        name = name.replace(".net.au", "")
+        name = name.replace(".org.au", "")
+        name = name.replace(".asn.au", "")
+        name = name.replace(".au", "")
+        name = name.replace("-", " ")
+        name = name.strip()
+        return name.title()
 
-        # Must be Australian domain
-        if not domain.endswith(".au"):
-            return False
+    def insert_batch(self, domains_batch, db_password):
 
-        # Exclude robots
-        if "robots.txt" in url:
-            return False
+        if not domains_batch:
+            return 0
 
-        # Exclude obvious IP addresses
-        if re.search(r"\d+\.\d+\.\d+\.\d+", domain):
-            return False
+        db = PostgresConnector(password=db_password)
 
-        # Exclude too many digits (likely spam)
-        if sum(c.isdigit() for c in domain) > 4:
-            return False
+        data = []
 
-        # Exclude weird subdomains like ww38
-        if domain.startswith("ww") and not domain.startswith("www"):
-            return False
+        for domain in domains_batch:
+            data.append({
+                "website_url": f"http://{domain}",
+                "company_name": self.domain_to_company_name(domain),
+                "industry": None
+            })
 
-        return True
+        df = pd.DataFrame(data)
 
-    # ---------------------------
-    # Fetch Index Records (Paginated + Deduped)
-    # ---------------------------
-    def fetch_index_records(self):
+        df.to_sql(
+            name="commoncrawl_raw",
+            con=db.engine,
+            schema="staging",
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=2000
+        )
+
+        print(f"Inserted batch of {len(df)} records into DB")
+
+        return len(df)
+
+    def run(self, db_password):
+
         base_params = {
             "url": "*.au",
             "output": "json"
         }
 
-        count = 0
-        page = 0
-        max_retries = 3
         seen_domains = set()
+        domains_batch = []
 
-        while count < self.limit:
+        total_collected = 0
+        total_inserted = 0
+
+        end_page = self.start_page + self.max_pages
+
+        for page in range(self.start_page, end_page):
+
             params = base_params.copy()
             params["page"] = page
 
-            retries = 0
+            print(f"\nFetching page {page}...")
 
-            while retries < max_retries:
-                try:
-                    print(f"Fetching index page {page} (attempt {retries+1})...")
-
-                    response = requests.get(
-                        self.base_url,
-                        params=params,
-                        stream=True,
-                        timeout=60
-                    )
-
-                    if response.status_code != 200:
-                        print("No more pages available.")
-                        return
-
-                    lines_found = False
-
-                    for line in response.iter_lines():
-                        if count >= self.limit:
-                            return
-
-                        if not line:
-                            continue
-
-                        lines_found = True
-                        record = json.loads(line)
-                        url = record.get("url")
-
-                        if not self.is_valid_company_url(url):
-                            continue
-
-                        parsed = urlparse(url)
-                        domain = parsed.hostname.lower() if parsed.hostname else ""
-
-                        # Deduplicate by domain
-                        if domain in seen_domains:
-                            continue
-
-                        seen_domains.add(domain)
-
-                        yield record
-                        count += 1
-
-                    if not lines_found:
-                        print("No results in this page.")
-                        return
-
-                    print(f"Page {page} complete. Unique domains so far: {count}")
-                    break  # success
-
-                except (ChunkedEncodingError, ConnectionError):
-                    retries += 1
-                    print(f"Connection dropped. Retrying page {page}...")
-                    time.sleep(2)
-
-            if retries == max_retries:
-                print(f"Skipping page {page} after retries.")
-
-            page += 1
-
-    # ---------------------------
-    # Download WARC Segment
-    # ---------------------------
-    def download_warc_segment(self, record):
-        filename = record["filename"]
-        offset = int(record["offset"])
-        length = int(record["length"])
-
-        warc_url = f"https://data.commoncrawl.org/{filename}"
-
-        headers = {
-            "Range": f"bytes={offset}-{offset+length-1}"
-        }
-
-        try:
-            response = requests.get(warc_url, headers=headers, timeout=30)
-
-            if response.status_code != 206:
-                return None
-
-            return response.content
-
-        except Exception:
-            return None
-
-    # ---------------------------
-    # Extract Company Info
-    # ---------------------------
-    def extract_company_info(self, html_bytes, url):
-        try:
-            stream = BytesIO(html_bytes)
-
-            for warc_record in ArchiveIterator(stream):
-                if warc_record.rec_type == "response":
-                    html = warc_record.content_stream().read()
-                    soup = BeautifulSoup(html, "html.parser")
-
-                    company_name = None
-
-                    # Priority extraction order
-                    og_site = soup.find("meta", property="og:site_name")
-                    if og_site and og_site.get("content"):
-                        company_name = og_site["content"].strip()
-
-                    if not company_name:
-                        og_title = soup.find("meta", property="og:title")
-                        if og_title and og_title.get("content"):
-                            company_name = og_title["content"].strip()
-
-                    if not company_name:
-                        app_name = soup.find("meta", attrs={"name": "application-name"})
-                        if app_name and app_name.get("content"):
-                            company_name = app_name["content"].strip()
-
-                    if not company_name:
-                        twitter_title = soup.find("meta", attrs={"name": "twitter:title"})
-                        if twitter_title and twitter_title.get("content"):
-                            company_name = twitter_title["content"].strip()
-
-                    if not company_name:
-                        h1 = soup.find("h1")
-                        if h1:
-                            company_name = h1.get_text().strip()
-
-                    if not company_name and soup.title:
-                        company_name = soup.title.string.strip()
-
-                    # Junk filter
-                    if company_name:
-                        junk_words = ["home", "welcome", "index", "untitled", "default"]
-                        if company_name.lower() in junk_words:
-                            return None
-
-                    # Industry extraction
-                    meta_keywords = soup.find("meta", attrs={"name": "keywords"})
-                    keywords = meta_keywords["content"] if meta_keywords and "content" in meta_keywords.attrs else None
-
-                    meta_desc = soup.find("meta", attrs={"name": "description"})
-                    description = meta_desc["content"] if meta_desc and "content" in meta_desc.attrs else None
-
-                    industry = keywords if keywords else description
-
-                    if company_name:
-                        return {
-                            "website_url": url,
-                            "company_name": company_name,
-                            "industry": industry
-                        }
-
-        except Exception:
-            return None
-
-        return None
-
-    # ---------------------------
-    # Run Full Extraction
-    # ---------------------------
-    def run_extraction(self):
-        results = []
-
-        print(f"Starting extraction for up to {self.limit} unique domains...")
-
-        for record in tqdm(self.fetch_index_records()):
             try:
-                warc_data = self.download_warc_segment(record)
-
-                if not warc_data:
-                    continue
-
-                company_data = self.extract_company_info(
-                    warc_data, record["url"]
+                response = requests.get(
+                    self.base_url,
+                    params=params,
+                    stream=True,
+                    timeout=60
                 )
 
-                if company_data:
-                    results.append(company_data)
+                if response.status_code != 200:
+                    print("No more pages available.")
+                    break
 
-            except Exception:
+                page_count = 0
+
+                for line in response.iter_lines(decode_unicode=True):
+
+                    if not line:
+                        continue
+
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        # Skip malformed / partial lines from Common Crawl
+                        continue
+
+                    url = record.get("url")
+                    if not url:
+                        continue
+
+                    parsed = urlparse(url)
+                    domain = parsed.hostname
+
+                    if not self.is_valid_domain(domain):
+                        continue
+
+                    if domain in seen_domains:
+                        continue
+
+                    seen_domains.add(domain)
+                    domains_batch.append(domain)
+
+                    page_count += 1
+                    total_collected += 1
+
+                    if len(domains_batch) >= self.batch_size:
+                        inserted = self.insert_batch(domains_batch, db_password)
+                        total_inserted += inserted
+                        domains_batch = []
+
+                print(f"Page {page} collected: {page_count}")
+                print(f"Total collected so far: {total_collected}")
+                print(f"Total inserted so far: {total_inserted}")
+
+                time.sleep(2)
+
+            except (ChunkedEncodingError, ConnectionError):
+                print("Connection dropped. Cooling down...")
+                time.sleep(10)
                 continue
 
-        df = pd.DataFrame(results)
-        print(f"\nExtraction complete. Extracted {len(df)} unique company records.")
+        # Insert remaining
+        if domains_batch:
+            inserted = self.insert_batch(domains_batch, db_password)
+            total_inserted += inserted
 
-        return df
-
-    # ---------------------------
-    # Save Raw JSON
-    # ---------------------------
-    def save_raw_output(self, df):
-        os.makedirs("data/raw/commoncrawl", exist_ok=True)
-
-        filename = f"data/raw/commoncrawl/commoncrawl_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        df.to_json(filename, orient="records", indent=2)
-
-        print(f"Raw data saved to {filename}")
-
-    # ---------------------------
-    # Insert Into Postgres
-    # ---------------------------
-    def insert_into_db(self, df, db_password):
-        db = PostgresConnector(password=db_password)
-
-        db.insert_dataframe(
-            df=df,
-            table_name="commoncrawl_raw",
-            schema="staging"
-        )
-
-        print("Data inserted into staging.commoncrawl_raw")
+        print("\nExtraction window complete.")
+        print(f"Final collected: {total_collected}")
+        print(f"Final inserted: {total_inserted}")
 
 
-# ---------------------------
-# Run Script
-# ---------------------------
 if __name__ == "__main__":
+
     PASSWORD = "firmable"
 
-    extractor = CommonCrawlExtractor(limit=1000)
-    df = extractor.run_extraction()
+    extractor = FastCommonCrawlExtractor(
+        start_page=272,
+        max_pages=50,
+        batch_size=1000
+    )
 
-    if not df.empty:
-        extractor.save_raw_output(df)
-        extractor.insert_into_db(df, db_password=PASSWORD)
-        print(df.head())
-    else:
-        print("No valid records extracted.")
+    extractor.run(db_password=PASSWORD)
