@@ -1,204 +1,462 @@
+"""
+entity_matcher.py
+-----------------
+Matches entities from staging.commoncrawl_clean → staging.abr_clean and:
+  - Writes every confirmed match to core.company_master IMMEDIATELY.
+  - Writes every AI log to core.ai_match_log IMMEDIATELY after each AI call.
+
+Scoring rules
+  >= 85        → auto-approved  (fuzzy only, no AI)
+  78 – 84      → AI validated   (approved only if AI returns same_entity=True)
+  < 78         → rejected
+
+Key optimisations
+  - rapidfuzz with score_cutoff skips sub-threshold candidates in C.
+  - Dual blocking index (3-char prefix + first token) catches word-order variants.
+  - Composite scorer: token_set_ratio + partial_ratio + token_sort_ratio.
+  - Parallel AI calls via ThreadPoolExecutor (default 6 workers, safe on 8GB RAM).
+  - Immediate single-row DB writes — no batching delay.
+  - All regex compiled once at module level.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pandas as pd
-from rapidfuzz import process, fuzz
+from rapidfuzz import fuzz, process as rf_process
 from sqlalchemy import text
+
 from src.db.connection import PostgresConnector
 from src.matching.ai_validator import AIValidator
-import json
 
 
-class EntityMatcher:
-    def __init__(self, db_password, threshold=85):
-        self.db = PostgresConnector(password=db_password)
-        self.threshold = threshold
+# ── Module-level compiled patterns ──────────────────────────────────────────
 
-    # ---------------------------------
-    # Load Clean Datasets
-    # ---------------------------------
-    def load_data(self):
-        print("Loading clean datasets...")
+_LEGAL_SUFFIX_RE = re.compile(
+    r"\b("
+    r"pty\.?\s*ltd\.?|p\/l|"
+    r"ltd\.?|limited|"
+    r"inc\.?|incorporated|"
+    r"corp\.?|corporation|"
+    r"holdings?|group|trust|"
+    r"services?|solutions?|"
+    r"australia|aust\.?|"
+    r"nsw|vic|qld|wa|sa|tas|act|nt"
+    r")\b",
+    re.IGNORECASE,
+)
+_PUNCT_RE      = re.compile(r"[^\w\s]")
+_WHITESPACE_RE = re.compile(r"\s+")
 
-        cc_query = """
-        SELECT website_url, company_name, normalized_name
-        FROM staging.commoncrawl_clean
-        """
+# ── Scoring thresholds ───────────────────────────────────────────────────────
 
-        abr_query = """
-        SELECT abn, entity_name, normalized_name,
-               entity_type, entity_status,
-               state, postcode
-        FROM staging.abr_clean
-        """
+SCORE_AUTO_APPROVE = 85   # >= 85  → auto-approve, no AI needed
+SCORE_AI_MIN       = 78   # 78–84  → send to AI for validation
+                           # < 78   → reject outright
 
-        cc_df = pd.read_sql(cc_query, self.db.engine)
-        abr_df = pd.read_sql(abr_query, self.db.engine)
+# ── DB SQL ───────────────────────────────────────────────────────────────────
 
-        print(f"Common Crawl records: {len(cc_df)}")
-        print(f"ABR records: {len(abr_df)}")
+_INSERT_MASTER = text("""
+    INSERT INTO core.company_master
+        (abn, website_url, company_name, industry,
+         entity_type, entity_status, state, postcode,
+         match_method, match_confidence)
+    SELECT
+        :abn, :website_url, :company_name, :industry,
+        :entity_type, :entity_status, :state, :postcode,
+        :match_method, :match_confidence
+    WHERE NOT EXISTS (
+        SELECT 1 FROM core.company_master
+        WHERE abn = :abn AND website_url = :website_url
+    )
+""")
 
-        return cc_df, abr_df
-
-    # ---------------------------------
-    # Perform Fuzzy + AI Matching (Optimized with Blocking)
-    # ---------------------------------
-    def fuzzy_match(self, cc_df, abr_df):
-        print("Starting fuzzy matching with blocking...")
-
-        ai_validator = AIValidator()
-        matches = []
-
-        abr_df = abr_df.dropna(subset=["normalized_name"])
-        abr_df["first_char"] = abr_df["normalized_name"].str[0]
-
-        abr_groups = {
-            char: group.reset_index(drop=True)
-            for char, group in abr_df.groupby("first_char")
-        }
-
-        total_processed = 0
-        total_ai_calls = 0
-        total_auto = 0
-
-        for _, cc_row in cc_df.iterrows():
-            total_processed += 1
-            cc_name = cc_row["normalized_name"]
-
-            if not cc_name:
-                continue
-
-            first_char = cc_name[0]
-
-            if first_char not in abr_groups:
-                continue
-
-            candidate_group = abr_groups[first_char]
-            abr_names = candidate_group["normalized_name"].tolist()
-
-            match = process.extractOne(
-                cc_name,
-                abr_names,
-                scorer=fuzz.token_sort_ratio
-            )
-
-            if not match:
-                continue
-
-            best_match_name, score, index = match
-            abr_row = candidate_group.iloc[index]
-
-            # 🥇 Auto accept
-            if score >= self.threshold:
-                total_auto += 1
-
-                matches.append({
-                    "abn": abr_row["abn"],
-                    "website_url": cc_row["website_url"],
-                    "company_name": abr_row["entity_name"],
-                    "industry": None,
-                    "entity_type": abr_row["entity_type"],
-                    "entity_status": abr_row["entity_status"],
-                    "state": abr_row["state"],
-                    "postcode": abr_row["postcode"],
-                    "match_method": "fuzzy_auto",
-                    "match_confidence": float(score)
-                })
-
-            # 🥈 AI validation
-            elif 75 <= score < self.threshold:
-                total_ai_calls += 1
-                print(f"[AI Triggered] {cc_row['company_name']} ↔ {abr_row['entity_name']} | Score: {score}")
-
-                ai_result = ai_validator.validate(
-                    cc_row["company_name"],
-                    abr_row["entity_name"]
-                )
-
-                parsed = ai_result["parsed"]
-
-                with self.db.engine.begin() as conn:
-                    conn.execute(
-                        text("""
-                            INSERT INTO core.ai_match_log
-                            (company_a, company_b, fuzzy_score, prompt, llm_response, decision)
-                            VALUES (:a, :b, :score, :prompt, :response, :decision)
-                        """),
-                        {
-                            "a": cc_row["company_name"],
-                            "b": abr_row["entity_name"],
-                            "score": float(score),
-                            "prompt": ai_result["prompt"],
-                            "response": json.dumps(parsed),
-                            "decision": parsed["same_entity"]
-                        }
-                    )
-
-                if parsed["same_entity"]:
-                    matches.append({
-                        "abn": abr_row["abn"],
-                        "website_url": cc_row["website_url"],
-                        "company_name": abr_row["entity_name"],
-                        "industry": None,
-                        "entity_type": abr_row["entity_type"],
-                        "entity_status": abr_row["entity_status"],
-                        "state": abr_row["state"],
-                        "postcode": abr_row["postcode"],
-                        "match_method": "ai_validated",
-                        "match_confidence": float(parsed["confidence"] * 100)
-                    })
-
-            # Print progress every 50 records
-            if total_processed % 50 == 0:
-                print(f"Processed: {total_processed} | Auto: {total_auto} | AI Calls: {total_ai_calls}")
-
-        print(f"Total processed: {total_processed}")
-        print(f"Total fuzzy_auto: {total_auto}")
-        print(f"Total AI calls: {total_ai_calls}")
-        print(f"Total matches found: {len(matches)}")
-
-        return pd.DataFrame(matches)
+_INSERT_AI_LOG = text("""
+    INSERT INTO core.ai_match_log
+        (company_a, company_b, fuzzy_score,
+         prompt, llm_response,
+         decision)
+    VALUES
+        (:company_a, :company_b, :fuzzy_score,
+         :prompt, CAST(:llm_response AS jsonb),
+         :decision)
+""")
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-    # ---------------------------------
-    # Insert Into core.company_master
-    # ---------------------------------
-    def insert_matches(self, matches_df):
-        if matches_df.empty:
-            print("No matches to insert.")
-            return
-
-        with self.db.engine.begin() as conn:
-            conn.execute(text("DELETE FROM core.company_master"))
-
-        matches_df.to_sql(
-            name="company_master",
-            con=self.db.engine,
-            schema="core",
-            if_exists="append",
-            index=False,
-            method="multi",
-        )
-
-        print("Inserted matches into core.company_master")
-
-    # ---------------------------------
-    # Run Full Matching Pipeline
-    # ---------------------------------
-    def run(self):
-        cc_df, abr_df = self.load_data()
-        matches_df = self.fuzzy_match(cc_df, abr_df)
-        self.insert_matches(matches_df)
-        print("Matching process completed.")
+def strong_normalize(name: str) -> str:
+    """
+    Lower-case, strip legal suffixes / state codes / punctuation, collapse spaces.
+    Uses module-level compiled regexes — safe to call from multiple threads.
+    """
+    if not name:
+        return ""
+    name = name.lower()
+    name = _LEGAL_SUFFIX_RE.sub("", name)
+    name = _PUNCT_RE.sub(" ", name)
+    name = _WHITESPACE_RE.sub(" ", name).strip()
+    return name
 
 
-# ---------------------------------
-# Run Script
-# ---------------------------------
-if __name__ == "__main__":
-    PASSWORD = "firmable"
-
-    matcher = EntityMatcher(
-        db_password=PASSWORD,
-        threshold=85
+def composite_score(norm_a: str, norm_b: str) -> float:
+    """
+    Best of three rapidfuzz scorers (all run in C, very fast):
+      token_set_ratio  – handles word-order differences & subset names
+      partial_ratio    – handles one name being contained in the other
+      token_sort_ratio – handles pure word-order shuffles
+    """
+    return max(
+        fuzz.token_set_ratio(norm_a, norm_b),
+        fuzz.partial_ratio(norm_a, norm_b),
+        fuzz.token_sort_ratio(norm_a, norm_b),
     )
 
+
+# ── Main class ───────────────────────────────────────────────────────────────
+
+class EntityMatcher:
+    """
+    Parameters
+    ----------
+    db_password  : PostgreSQL password for PostgresConnector.
+    ai_workers   : Parallel threads for AI validation (default 6, safe on 8 GB RAM).
+                   Do not exceed 8 on an 8 GB machine — risk of swap thrashing.
+    debug        : Print per-record decisions to stdout.
+    """
+
+    def __init__(
+        self,
+        db_password: str,
+        ai_workers:  int  = 6,     # ← safe sweet spot for 8 GB RAM
+        debug:       bool = False,
+    ):
+        self.db           = PostgresConnector(password=db_password)
+        self.ai_workers   = ai_workers
+        self.debug        = debug
+        self.ai_validator = AIValidator()
+
+    # ── Data loading ──────────────────────────────────────────────────────────
+
+    def load_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        cc_df = pd.read_sql("""
+            SELECT website_url, company_name, normalized_name
+            FROM staging.commoncrawl_clean
+            WHERE normalized_name IS NOT NULL
+        """, self.db.engine)
+
+        abr_df = pd.read_sql("""
+            SELECT abn, entity_name, normalized_name,
+                   entity_type, entity_status, state, postcode
+            FROM staging.abr_clean
+            WHERE normalized_name IS NOT NULL
+        """, self.db.engine)
+
+        print(f"Common Crawl records : {len(cc_df):,}")
+        print(f"ABR records          : {len(abr_df):,}")
+        return cc_df, abr_df
+
+    # ── Blocking index ────────────────────────────────────────────────────────
+
+    def build_indexes(self, abr_df: pd.DataFrame) -> tuple[dict, dict, dict, dict]:
+        """
+        Build two blocking indexes for fast candidate retrieval:
+          by_prefix3  – keyed on first 3 chars of strong_norm
+          by_token1   – keyed on first whitespace token of strong_norm
+        Both map key → list[namedtuple row] and key → list[str norm].
+        """
+        abr_df = abr_df.copy()
+        abr_df["strong_norm"] = abr_df["normalized_name"].apply(strong_normalize)
+
+        by_prefix3 = defaultdict(list)
+        by_token1  = defaultdict(list)
+
+        for row in abr_df.itertuples(index=False):
+            sn = row.strong_norm
+            if not sn:
+                continue
+            by_prefix3[sn[:3]].append(row)
+            first_tok = sn.split()[0] if sn.split() else sn
+            by_token1[first_tok].append(row)
+
+        def _names(d):
+            return {k: [r.strong_norm for r in v] for k, v in d.items()}
+
+        return by_prefix3, _names(by_prefix3), by_token1, _names(by_token1)
+
+    # ── Immediate DB writes ───────────────────────────────────────────────────
+
+    def _write_match(self, record: dict) -> None:
+        """Write a single confirmed match to core.company_master immediately."""
+        with self.db.engine.begin() as conn:
+            conn.execute(_INSERT_MASTER, record)
+        if self.debug:
+            print(f"  [DB MATCH] {record['company_name']} | "
+                  f"abn={record['abn']} | "
+                  f"method={record['match_method']} | "
+                  f"conf={record['match_confidence']:.1f}")
+
+    def _write_ai_log(self, log: dict) -> None:
+        """Write a single AI validation event to core.ai_match_log immediately."""
+        with self.db.engine.begin() as conn:
+            conn.execute(_INSERT_AI_LOG, log)
+        if self.debug:
+            print(f"  [DB AI LOG] {log['company_a']!r} / {log['company_b']!r} | "
+                  f"fuzzy={log['fuzzy_score']} | "
+                  f"approved={log['decision']}")
+
+    # ── Candidate lookup ──────────────────────────────────────────────────────
+
+    def _get_candidates(
+        self,
+        cc_norm:       str,
+        by_prefix3:    dict,
+        names_prefix3: dict,
+        by_token1:     dict,
+        names_token1:  dict,
+    ) -> tuple[list, list]:
+        """
+        Merge candidates from both blocking indexes, deduplicating by abn.
+        Returns (candidate_rows, candidate_norms).
+        """
+        key3   = cc_norm[:3]
+        tokens = cc_norm.split()
+        keytok = tokens[0] if tokens else cc_norm
+
+        seen_abns = set()
+        rows, norms = [], []
+
+        for bucket_rows, bucket_norms in (
+            (by_prefix3.get(key3, []),  names_prefix3.get(key3, [])),
+            (by_token1.get(keytok, []), names_token1.get(keytok, [])),
+        ):
+            for row, norm in zip(bucket_rows, bucket_norms):
+                if row.abn not in seen_abns:
+                    seen_abns.add(row.abn)
+                    rows.append(row)
+                    norms.append(norm)
+
+        return rows, norms
+
+    # ── Single AI validation job (runs in thread pool) ────────────────────────
+
+    def _run_ai_job(
+        self,
+        cc_name:     str,
+        abr_name:    str,
+        fuzzy_score: float,
+    ) -> tuple[bool, float]:
+        """
+        Call AIValidator, write the log immediately, return (approved, confidence).
+        Runs inside a ThreadPoolExecutor worker thread.
+        """
+        ai_result = self.ai_validator.validate(cc_name, abr_name)
+        parsed    = ai_result["parsed"]
+        approved  = bool(parsed["same_entity"])
+
+        self._write_ai_log({
+            "company_a":    cc_name,
+            "company_b":    abr_name,
+            "fuzzy_score":  fuzzy_score,
+            "prompt":       ai_result["prompt"],
+            "llm_response": json.dumps({
+                "raw":    ai_result["raw_response"],
+                "parsed": parsed,
+            }),
+            "decision":     approved,
+        })
+
+        return approved, float(parsed["confidence"])
+
+    # ── Core matching loop ────────────────────────────────────────────────────
+
+    def fuzzy_match(self, cc_df: pd.DataFrame, abr_df: pd.DataFrame) -> None:
+
+        print("\nBuilding blocking indexes …")
+        by_prefix3, names_prefix3, by_token1, names_token1 = self.build_indexes(abr_df)
+        print("Indexes ready. Starting matching …\n")
+
+        start          = time.perf_counter()
+        total_proc     = 0
+        total_written  = 0
+        total_ai       = 0
+        total_rejected = 0
+
+        # ── Helper closures ───────────────────────────────────────────────────
+
+        def _build_record(cc_row, abr_row, method: str, confidence: float) -> dict:
+            # Truncate to column limits and coerce None-safe strings
+            # state: VARCHAR(3), postcode: VARCHAR(4), match_method: VARCHAR(20)
+            raw_state    = str(abr_row.state    or "").strip()
+            raw_postcode = str(abr_row.postcode or "").strip()
+            raw_method   = str(method or "").strip()
+
+            # Only keep postcode if it looks like a valid AU postcode (4 digits)
+            postcode = raw_postcode if re.fullmatch(r"\d{4}", raw_postcode) else None
+            state    = raw_state[:3]   if raw_state    else None
+            method_  = raw_method[:20] if raw_method   else method
+
+            return {
+                "abn":              abr_row.abn,
+                "website_url":      cc_row.website_url,
+                "company_name":     abr_row.entity_name,
+                "industry":         None,
+                "entity_type":      abr_row.entity_type,
+                "entity_status":    abr_row.entity_status,
+                "state":            state,
+                "postcode":         postcode,
+                "match_method":     method_,
+                "match_confidence": round(float(confidence), 2),
+            }
+
+        def _drain_futures(pending: dict, total_written: int) -> int:
+            """Collect any completed AI futures and write approved matches."""
+            done = [f for f in list(pending) if f.done()]
+            for fut in done:
+                cc_row, abr_row, _ = pending.pop(fut)
+                try:
+                    approved, confidence = fut.result()
+                except Exception as exc:
+                    print(f"  [AI ERROR] {exc}")
+                    continue
+                if approved:
+                    self._write_match(_build_record(
+                        cc_row, abr_row, "ai_validated", confidence * 100
+                    ))
+                    total_written += 1
+            return total_written
+
+        # ── Main loop ─────────────────────────────────────────────────────────
+
+        pending_futures: dict = {}   # future → (cc_row, abr_row, fuzzy_score)
+
+        with ThreadPoolExecutor(max_workers=self.ai_workers) as executor:
+
+            for cc_row in cc_df.itertuples(index=False):
+                total_proc += 1
+
+                cc_norm = strong_normalize(cc_row.normalized_name)
+                if not cc_norm:
+                    continue
+
+                # Candidate retrieval via dual index
+                candidates, candidate_norms = self._get_candidates(
+                    cc_norm,
+                    by_prefix3, names_prefix3,
+                    by_token1,  names_token1,
+                )
+                if not candidates:
+                    continue
+
+                # Fast pre-filter — score_cutoff skips sub-77 pairs in C
+                best = rf_process.extractOne(
+                    cc_norm,
+                    candidate_norms,
+                    scorer=fuzz.token_set_ratio,
+                    score_cutoff=SCORE_AI_MIN - 1,   # skip anything below 77
+                )
+                if not best:
+                    total_rejected += 1
+                    continue
+
+                _, _, idx = best
+                abr_row  = candidates[idx]
+                abr_norm = abr_row.strong_norm
+
+                # Composite rescore for final decision
+                score = composite_score(cc_norm, abr_norm)
+
+                # ── Decision tree ─────────────────────────────────────────────
+
+                if score >= SCORE_AUTO_APPROVE:
+                    # Auto-approve — write immediately, no AI needed
+                    if self.debug:
+                        print(f"[AUTO] {cc_row.company_name!r} → "
+                              f"{abr_row.entity_name!r} | score={score:.0f}")
+                    self._write_match(_build_record(
+                        cc_row, abr_row, "fuzzy_auto", score
+                    ))
+                    total_written += 1
+
+                elif score >= SCORE_AI_MIN:
+                    # 78–84 — submit AI call to thread pool
+                    total_ai += 1
+                    if self.debug:
+                        print(f"[AI]   {cc_row.company_name!r} → "
+                              f"{abr_row.entity_name!r} | fuzzy={score:.0f}")
+                    fut = executor.submit(
+                        self._run_ai_job,
+                        cc_row.company_name,
+                        abr_row.entity_name,
+                        float(score),
+                    )
+                    pending_futures[fut] = (cc_row, abr_row, score)
+
+                else:
+                    # < 78 — reject
+                    total_rejected += 1
+
+                # Drain completed AI futures so memory stays bounded
+                if len(pending_futures) >= self.ai_workers * 2:
+                    total_written = _drain_futures(pending_futures, total_written)
+
+                # Progress report every 1,000 rows
+                if total_proc % 1000 == 0:
+                    elapsed = time.perf_counter() - start
+                    print(
+                        f"  Processed={total_proc:,}  "
+                        f"Written={total_written:,}  "
+                        f"AI calls={total_ai:,}  "
+                        f"Rejected={total_rejected:,}  "
+                        f"Elapsed={elapsed:.1f}s"
+                    )
+
+            # ── Drain all remaining AI futures ────────────────────────────────
+            print("\nWaiting for remaining AI calls to finish …")
+            for fut in as_completed(pending_futures):
+                cc_row, abr_row, _ = pending_futures[fut]
+                try:
+                    approved, confidence = fut.result()
+                except Exception as exc:
+                    print(f"  [AI ERROR] {exc}")
+                    continue
+                if approved:
+                    self._write_match(_build_record(
+                        cc_row, abr_row, "ai_validated", confidence * 100
+                    ))
+                    total_written += 1
+
+        # ── Final summary ─────────────────────────────────────────────────────
+        elapsed = time.perf_counter() - start
+        print(
+            f"\n{'─' * 55}\n"
+            f"  Matching complete\n"
+            f"  Total processed  : {total_proc:,}\n"
+            f"  Written to DB    : {total_written:,}\n"
+            f"  AI calls made    : {total_ai:,}\n"
+            f"  Rejected (< 78)  : {total_rejected:,}\n"
+            f"  Total time       : {elapsed:.2f}s\n"
+            f"{'─' * 55}"
+        )
+
+    # ── Entry point ───────────────────────────────────────────────────────────
+
+    def run(self) -> None:
+        cc_df, abr_df = self.load_data()
+        self.fuzzy_match(cc_df, abr_df)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    matcher = EntityMatcher(
+        db_password="firmable",
+        ai_workers=6,    # safe sweet spot for 8 GB RAM
+        debug=True,
+    )
     matcher.run()

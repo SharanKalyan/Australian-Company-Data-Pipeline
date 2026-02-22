@@ -1,132 +1,149 @@
-import requests
+"""
+ai_validator.py
+---------------
+Calls a local Phi3:mini (Ollama) endpoint to validate whether two business
+names refer to the same Australian legal entity.
+
+Key optimisations vs. original
+  - Prompt stripped to the absolute minimum token count → faster prefill & decode.
+  - num_predict reduced to 60 (the JSON reply is ~40 tokens; 60 is a safe ceiling).
+  - temperature=0 → deterministic + fastest possible decode path.
+  - All regex patterns compiled once at import time instead of per-call.
+  - Persistent requests.Session keeps the TCP connection alive (saves ~10-30 ms
+    per request over a loopback socket).
+"""
+
+from __future__ import annotations
+
 import json
 import re
+
+import requests
+
+# ── Compiled once at import ──────────────────────────────────────────────────
+_MD_FENCE_RE   = re.compile(r"```(?:json)?", re.IGNORECASE)
+_JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
+# ────────────────────────────────────────────────────────────────────────────
 
 
 class AIValidator:
     """
-    AI Validator for semantic entity matching using a locally hosted LLM (Ollama).
+    Thin wrapper around Ollama's /api/generate endpoint for entity validation.
 
-    This class sends borderline fuzzy matches (75–84 similarity)
-    to an LLM for semantic validation and returns structured results.
+    Parameters
+    ----------
+    model   : Ollama model tag, default "phi3:mini"
+    timeout : HTTP timeout in seconds, default 20
     """
 
-    def __init__(self, model="phi3:mini"):
-        self.model = model
-        self.url = "http://localhost:11434/api/generate"
+    def __init__(self, model: str = "phi3:mini", timeout: int = 20):
+        self.model   = model
+        self.url     = "http://localhost:11434/api/generate"
+        self.timeout = timeout
+        # One persistent session → one TCP connection reused for all calls
+        self.session = requests.Session()
 
-    def extract_json(self, raw_text):
+    # ── Prompt builder ────────────────────────────────────────────────────────
+
+    def _build_prompt(self, name_a: str, name_b: str) -> str:
+        # Minimal tokens = faster prefill on Phi3:mini
+        return (
+            f'Same Australian business entity?\n'
+            f'A: "{name_a}"\n'
+            f'B: "{name_b}"\n'
+            f'Ignore: Pty Ltd / Ltd / Limited / Holdings / Group / state codes / punctuation.\n'
+            f'Be conservative.\n'
+            f'Reply ONLY with JSON: '
+            f'{{"same_entity":true/false,"confidence":0.0-1.0,"reason":"brief"}}'
+        )
+
+    # ── JSON extraction ───────────────────────────────────────────────────────
+
+    def _extract_json(self, raw: str) -> dict:
+        # Strip any markdown fences the model might emit
+        cleaned = _MD_FENCE_RE.sub("", raw).strip()
+
+        # Fast path — entire response is already valid JSON
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback — grab the first {...} block
+        m = _JSON_BLOCK_RE.search(cleaned)
+        if m:
+            return json.loads(m.group())
+
+        raise ValueError(f"No valid JSON in LLM response: {cleaned!r}")
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def validate(self, name_a: str, name_b: str) -> dict:
         """
-        Extract valid JSON object from LLM response text.
-        Handles cases where model adds extra explanation or markdown.
-        """
+        Validate whether two names refer to the same entity.
 
-        # Remove markdown code blocks if present
-        raw_text = raw_text.strip()
-        raw_text = re.sub(r"```json", "", raw_text, flags=re.IGNORECASE)
-        raw_text = re.sub(r"```", "", raw_text)
-
-        # Extract first JSON object found
-        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-
-        if not match:
-            raise ValueError("No JSON object found in response")
-
-        json_str = match.group()
-
-        return json.loads(json_str)
-
-    def validate(self, name_a, name_b):
-        """
-        Validate whether two company names refer to the same legal entity.
-
-        Returns:
+        Returns
+        -------
         {
-            "prompt": str,
+            "prompt":       str,
             "raw_response": str,
             "parsed": {
                 "same_entity": bool,
-                "confidence": float,
-                "reason": str
+                "confidence":  float,   # 0.0 – 1.0
+                "reason":      str,
             }
         }
         """
+        prompt = self._build_prompt(name_a, name_b)
 
-        prompt = f"""
-You are an expert in Australian company entity resolution.
-
-Determine whether the following two company names
-refer to the SAME legal business entity in Australia.
-
-Company A: "{name_a}"
-Company B: "{name_b}"
-
-Guidelines:
-- Consider abbreviations (e.g., Pty Ltd, Limited).
-- Consider minor formatting differences.
-- Do NOT assume similarity based only on shared common words.
-- Be conservative if uncertain.
-
-Respond ONLY in valid JSON format exactly like this:
-
-{{
-  "same_entity": true or false,
-  "confidence": number between 0 and 1,
-  "reason": "short explanation"
-}}
-"""
-
+        # ── LLM call ─────────────────────────────────────────────────────────
         try:
-            response = requests.post(
+            resp = self.session.post(
                 self.url,
                 json={
-                    "model": self.model,
+                    "model":  self.model,
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "options": {
+                        "num_predict": 60,   # ~40 tokens needed; 60 is safe ceiling
+                        "temperature": 0.0,  # deterministic = consistent + faster
+                    },
                 },
-                timeout=60
+                timeout=self.timeout,
             )
+            resp.raise_for_status()
+            raw_output = resp.json().get("response", "").strip()
 
-            response.raise_for_status()
-
-            raw_output = response.json().get("response", "").strip()
-
-        except Exception as e:
+        except Exception as exc:
             return {
-                "prompt": prompt,
-                "raw_response": str(e),
+                "prompt":       prompt,
+                "raw_response": str(exc),
                 "parsed": {
                     "same_entity": False,
-                    "confidence": 0.0,
-                    "reason": "LLM request failed"
-                }
+                    "confidence":  0.0,
+                    "reason":      "LLM request failed",
+                },
             }
 
-        # ------------------------------
-        # Robust JSON Extraction
-        # ------------------------------
+        # ── Parse ─────────────────────────────────────────────────────────────
         try:
-            parsed_json = self.extract_json(raw_output)
-
-            same_entity = bool(parsed_json.get("same_entity", False))
-            confidence = float(parsed_json.get("confidence", 0.0))
-            reason = str(parsed_json.get("reason", ""))
-
+            parsed = self._extract_json(raw_output)
             parsed_clean = {
-                "same_entity": same_entity,
-                "confidence": max(0.0, min(confidence, 1.0)),
-                "reason": reason
+                "same_entity": bool(parsed.get("same_entity", False)),
+                "confidence":  round(
+                    max(0.0, min(float(parsed.get("confidence", 0.0)), 1.0)), 4
+                ),
+                "reason": str(parsed.get("reason", "")),
             }
-
-        except Exception as e:
+        except Exception as exc:
             parsed_clean = {
                 "same_entity": False,
-                "confidence": 0.0,
-                "reason": f"LLM response parsing failed: {str(e)}"
+                "confidence":  0.0,
+                "reason":      f"Parsing failed: {exc}",
             }
 
         return {
-            "prompt": prompt,
+            "prompt":       prompt,
             "raw_response": raw_output,
-            "parsed": parsed_clean
+            "parsed":       parsed_clean,
         }
