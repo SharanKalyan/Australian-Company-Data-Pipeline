@@ -59,11 +59,11 @@ The architecture separates ingestion, transformation, matching, and core integra
 |----------------------------|----------|
 | ABR Raw Records Loaded	   | 500,000  |
 | ABR Clean Records          | 118,882  |
-| Common Crawl Raw Records	 | 799      |
-| Common Crawl Clean Records | 799      |
-| Total Matches Identified   | 50       |
-| Fuzzy Auto Matches	       | 42       |
-| AI Validated Matches	     | 8        |
+| Common Crawl Raw Records	 | 111923   |
+| Common Crawl Clean Records | 96404    |
+| Total Matches Identified   |          |
+| Fuzzy Auto Matches	       |          |
+| AI Validated Matches	     |          |
 
 ### Note: The architecture supports scaling to 100k+ Common Crawl records with parallel execution or cloud deployment.
 
