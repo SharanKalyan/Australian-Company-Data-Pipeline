@@ -65,6 +65,9 @@ The architecture separates ingestion, transformation, matching, and core integra
 | Fuzzy Auto Matches	       |          |
 | AI Validated Matches	     |          |
 
+<img width="442" height="201" alt="image" src="https://github.com/user-attachments/assets/bd854c3a-ceb4-4594-a648-72521b5e62ab" />
+
+
 ### Note: The architecture supports scaling to 100k+ Common Crawl records with parallel execution or cloud deployment.
 
 ## Hybrid Entity Matching Strategy
