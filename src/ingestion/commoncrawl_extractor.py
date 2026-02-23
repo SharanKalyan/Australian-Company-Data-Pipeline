@@ -168,7 +168,7 @@ if __name__ == "__main__":
     PASSWORD = "firmable"
 
     extractor = FastCommonCrawlExtractor(
-        start_page=272,
+        start_page=376,
         max_pages=50,
         batch_size=1000
     )
