@@ -124,6 +124,7 @@ SELECT uuid_generate_v4();
 
 select count(*) from staging.commoncrawl_clean;
 
+select count(*) from staging.commoncrawl_raw;
 
 select * from staging.abr_raw limit 100;
 
@@ -194,7 +195,101 @@ select * from core.ai_match_log;
 SELECT * FROM core.company_master WHERE postcode IS NULL OR state IS NULL;
 
 
--- truncate table core.company_master;
--- truncate table core.ai_match_log;
+truncate table core.company_master;
+truncate table core.ai_match_log;
 
 -- truncate table staging.commoncrawl_clean;
+
+select count(*) from staging.commoncrawl_raw;
+
+select count(*) from staging.commoncrawl_clean;
+
+--------------------------------------------------------------
+
+
+
+--------------------------------------
+
+-- Staging.commoncrawl_raw
+select count(*) from staging.commoncrawl_raw;
+select * from staging.commoncrawl_raw limit 10; 
+-- website_url, company_name,industry,loaded_at
+
+
+--------------------------------------
+-- Staging.abr_raw
+select count(*) from staging.abr_raw;
+select * from staging.abr_raw limit 10; 
+-- abn, entity_name,entity_type,entity_status,address_line,postcode,state,start_date,loaded_at
+
+-- stats
+select count(distinct(entity_type)) from staging.abr_raw; --47 unique
+select distinct(entity_type) from staging.abr_raw; 
+
+select count(distinct(entity_status)) from staging.abr_raw; --2 unique
+select distinct(entity_status) from staging.abr_raw; -- ACT(ive) | CAN(celled)
+
+select count(distinct(raw.state)) from staging.abr_raw as raw; --9 unique (1 [null] | 1 " ")
+select distinct(raw.state) from staging.abr_raw as raw; -- ACT, NSW, NT, QLD, SA, TAS, VIC, WA, "", [null] 
+
+select start_date from staging.abr_raw 
+order by 1 asc
+limit 1; -- 1999-01-11
+
+select start_date from staging.abr_raw 
+order by 1 desc
+limit 1; -- 2026-04-01
+
+
+select state , count(distinct abn) as "counts"
+from staging.abr_raw
+group by 1
+order by "counts" desc;
+
+select entity_status , count(distinct abn) as "counts"
+from staging.abr_raw
+group by 1
+order by "counts" desc;
+
+--------------------------------------
+
+-- Staging.commoncrawl_clean
+
+select count(*) from staging.commoncrawl_clean;
+select * from staging.commoncrawl_clean limit 10; 
+-- website_url, company_name, normalized_name, industry
+
+select company_name, count(website_url) as "counts"
+from staging.commoncrawl_clean
+group by 1
+order by "counts" desc;
+
+--------------------------------------
+
+-- Staging.abr_clean
+
+select count(*) from staging.abr_clean;
+select * from staging.abr_clean limit 10; 
+-- website_url, company_name, normalized_name, industry
+
+-- stats
+select entity_status, count(abn) as "counts"
+from staging.abr_clean
+group by 1
+order by "counts" desc; -- All are ACT(ive)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
