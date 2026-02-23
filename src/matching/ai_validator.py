@@ -1,20 +1,5 @@
-"""
-ai_validator.py
----------------
-Calls a local Phi3:mini (Ollama) endpoint to validate whether two business
-names refer to the same Australian legal entity.
-
-Key optimisations vs. original
-  - Prompt stripped to the absolute minimum token count → faster prefill & decode.
-  - num_predict reduced to 60 (the JSON reply is ~40 tokens; 60 is a safe ceiling).
-  - temperature=0 → deterministic + fastest possible decode path.
-  - All regex patterns compiled once at import time instead of per-call.
-  - Persistent requests.Session keeps the TCP connection alive (saves ~10-30 ms
-    per request over a loopback socket).
-"""
 
 from __future__ import annotations
-
 import json
 import re
 

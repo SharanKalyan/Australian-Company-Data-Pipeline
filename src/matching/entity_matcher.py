@@ -55,8 +55,9 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 # ── Scoring thresholds ───────────────────────────────────────────────────────
 
-SCORE_AUTO_APPROVE = 85   # >= 85  → auto-approve, no AI needed
-SCORE_AI_MIN       = 78   # 78–84  → send to AI for validation
+SCORE_HIGH_CONF    = 90   # > 90   → auto-approve, HIGH confidence
+SCORE_MED_CONF     = 82   # 82–90  → auto-approve, MEDIUM confidence
+SCORE_AI_MIN       = 78   # 78–81  → send to AI for validation
                            # < 78   → reject outright
 
 # ── DB SQL ───────────────────────────────────────────────────────────────────
@@ -282,10 +283,13 @@ class EntityMatcher:
         print("Indexes ready. Starting matching …\n")
 
         start          = time.perf_counter()
+        total_records  = len(cc_df)          # known upfront for ETA
         total_proc     = 0
         total_written  = 0
         total_ai       = 0
         total_rejected = 0
+        total_high     = 0
+        total_med      = 0
 
         # ── Helper closures ───────────────────────────────────────────────────
 
@@ -373,18 +377,30 @@ class EntityMatcher:
 
                 # ── Decision tree ─────────────────────────────────────────────
 
-                if score >= SCORE_AUTO_APPROVE:
-                    # Auto-approve — write immediately, no AI needed
+                if score > SCORE_HIGH_CONF:
+                    # > 90 — HIGH confidence auto-approve
                     if self.debug:
-                        print(f"[AUTO] {cc_row.company_name!r} → "
+                        print(f"[HIGH] {cc_row.company_name!r} → "
                               f"{abr_row.entity_name!r} | score={score:.0f}")
                     self._write_match(_build_record(
-                        cc_row, abr_row, "fuzzy_auto", score
+                        cc_row, abr_row, "fuzzy_high_conf", score
                     ))
                     total_written += 1
+                    total_high    += 1
+
+                elif score >= SCORE_MED_CONF:
+                    # 82–90 — MEDIUM confidence auto-approve
+                    if self.debug:
+                        print(f"[MED]  {cc_row.company_name!r} → "
+                              f"{abr_row.entity_name!r} | score={score:.0f}")
+                    self._write_match(_build_record(
+                        cc_row, abr_row, "fuzzy_med_conf", score
+                    ))
+                    total_written += 1
+                    total_med     += 1
 
                 elif score >= SCORE_AI_MIN:
-                    # 78–84 — submit AI call to thread pool
+                    # 78–81 — borderline, send to AI
                     total_ai += 1
                     if self.debug:
                         print(f"[AI]   {cc_row.company_name!r} → "
@@ -407,13 +423,21 @@ class EntityMatcher:
 
                 # Progress report every 1,000 rows
                 if total_proc % 1000 == 0:
-                    elapsed = time.perf_counter() - start
+                    elapsed      = time.perf_counter() - start
+                    remaining    = total_records - total_proc
+                    rate         = total_proc / elapsed if elapsed > 0 else 0
+                    eta_secs     = (remaining / rate) if rate > 0 else 0
+                    eta_mins     = eta_secs / 60
+                    pct          = (total_proc / total_records * 100) if total_records > 0 else 0
                     print(
-                        f"  Processed={total_proc:,}  "
+                        f"  [{pct:5.1f}%] "
+                        f"Processed={total_proc:,}/{total_records:,}  "
+                        f"Remaining={remaining:,}  "
                         f"Written={total_written:,}  "
                         f"AI calls={total_ai:,}  "
                         f"Rejected={total_rejected:,}  "
-                        f"Elapsed={elapsed:.1f}s"
+                        f"Elapsed={elapsed:.1f}s  "
+                        f"ETA={eta_mins:.1f}m"
                     )
 
             # ── Drain all remaining AI futures ────────────────────────────────
@@ -438,8 +462,12 @@ class EntityMatcher:
             f"  Matching complete\n"
             f"  Total processed  : {total_proc:,}\n"
             f"  Written to DB    : {total_written:,}\n"
+            f"    ↳ High conf (>90) : {total_high:,}\n"
+            f"    ↳ Med conf (82-90): {total_med:,}\n"
+            f"    ↳ AI approved     : {total_written - total_high - total_med:,}\n"
             f"  AI calls made    : {total_ai:,}\n"
             f"  Rejected (< 78)  : {total_rejected:,}\n"
+            f"  Thresholds       : AI=78-81 | Med=82-90 | High=>90\n"
             f"  Total time       : {elapsed:.2f}s\n"
             f"{'─' * 55}"
         )
