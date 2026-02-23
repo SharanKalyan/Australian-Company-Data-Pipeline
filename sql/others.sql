@@ -278,9 +278,36 @@ from staging.abr_clean
 group by 1
 order by "counts" desc; -- All are ACT(ive)
 
+--------------------------------------
+
+-- core.company_master
+select count(*) from core.company_master;
+select * from core.company_master limit 10;
+-- company_id, abn, website_url, company_name, industry, 
+-- entity_type, entity_status, state, postcode, match_method, match_confidence, created_at
+
+-- stats
+select distinct match_method , count(*) from core.company_master
+group by 1
+order by 2 desc
+;
 
 
+select company_name, count(website_url) as "counts"
+from staging.commoncrawl_clean
+group by 1
+order by "counts" desc;
 
+
+---------------------------------------
+
+select * from core.ai_match_log ;
+select * from core.company_master;
+
+-- Joining the 2 core tables is only possible through company names. 
+select m.company_name , website_url, a.company_a, a.company_b from core.company_master as m
+left join core.ai_match_log as a
+on a.company_b = m.company_name;
 
 
 
