@@ -92,6 +92,7 @@ Step 3: Threshold Logic
 | 78–81	        | AI validation                 |
 | < 78	        | Reject                        |
 
+The AI Validation is restricted to only be triggered when the scores are between 78-81 considering the cost and time when running it in production grade environments  
 
 
 Step 4: AI Semantic Validation
