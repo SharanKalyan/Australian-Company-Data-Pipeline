@@ -1,4 +1,4 @@
-# Australian-Company-Data-Pipeline
+# Australian-Company-Data-Pipeline - Data collection and cleaning 
 
 End-to-end data engineering pipeline that extracts, transforms, and integrates Australian company data from:
 
